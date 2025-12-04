@@ -1,0 +1,334 @@
+// #if 0
+// /********************************************************************
+//  * Simple Water Level Reader - SHADOW PERSISTENCE VERSION
+//  * Target Board: ESP32 V2.0.17
+//  * Features:
+//  * - AWS IoT Shadow (Handles WiFi Disconnects)
+//  * - Auto-Reconnect & State Sync
+//  * - Crash-Proof Plug Control
+//  * - Real Sensor Reading & Timer Control
+//  * - Feedback System
+//  ********************************************************************/
+
+// #include "Secrets.h"
+// #include "tapo_device.h"
+// #include <ArduinoJson.h>
+// #include <PubSubClient.h>
+// #include <WiFi.h>
+// #include <WiFiClientSecure.h>
+
+// #define SKIMMER_LEVEL_PIN 4
+// #define DRUMFILTER_PIN 5
+// #define BACKWASH_SIGNAL_PIN 16
+// #define MAIN_RAS_PUMP "192.168.29.39"
+
+// // --- GLOBAL OBJECTS ---
+// TapoDevice mainRASPump;
+// bool tapoInitialized = false;
+
+// // --- POINTERS (Crash Fix) ---
+// WiFiClientSecure *net = NULL;
+// PubSubClient *client = NULL;
+// bool awsConnected = false;
+
+// // --- TOPICS ---
+// char SHADOW_UPDATE_TOPIC[128];
+// char SHADOW_DELTA_TOPIC[128];
+// #define AWS_IOT_PUBLISH_TOPIC "sensor/waterlevel"
+// #define AWS_IOT_FEEDBACK_TOPIC "har-test/feedback"
+
+// // Flags & Timers
+// bool triggerPumpOn = false;
+// bool triggerPumpOff = false;
+// unsigned long backwashStopTime = 0;
+// bool backwashState = false;
+
+// int counter = 0;
+
+// void setup() {
+//   Serial.begin(115200);
+
+//   pinMode(SKIMMER_LEVEL_PIN, INPUT_PULLUP);
+//   pinMode(DRUMFILTER_PIN, INPUT_PULLUP);
+//   pinMode(BACKWASH_SIGNAL_PIN, OUTPUT);
+//   digitalWrite(BACKWASH_SIGNAL_PIN, HIGH); // Default OFF (Active Low)
+
+//   Serial.println("System Starting (Shadow Mode)...");
+//   delay(100);
+
+//   // Initialize Network Objects
+//   net = new WiFiClientSecure();
+//   client = new PubSubClient(*net);
+
+//   // Build Shadow Topics Dynamically
+//   sprintf(SHADOW_UPDATE_TOPIC, "$aws/things/%s/shadow/update", THINGNAME);
+//   sprintf(SHADOW_DELTA_TOPIC, "$aws/things/%s/shadow/update/delta", THINGNAME);
+
+//   connectAWS();
+
+//   if (WiFi.status() == WL_CONNECTED) {
+//     Serial.println("Initializing global Tapo device...");
+//     mainRASPump.begin(MAIN_RAS_PUMP, TAPO_EMAIL, TAPO_PASSWORD);
+//     tapoInitialized = true;
+//   }
+// }
+
+// // --- SHADOW REPORTING FUNCTION ---
+// void reportShadowState(bool isOn) {
+//   if (!awsConnected)
+//     return;
+
+//   StaticJsonDocument<200> doc;
+//   JsonObject state = doc.createNestedObject("state");
+//   JsonObject reported = state.createNestedObject("reported");
+//   reported["pump"] = isOn ? "ON" : "OFF";
+
+//   char buff[512];
+//   serializeJson(doc, buff);
+//   client->publish(SHADOW_UPDATE_TOPIC, buff);
+//   Serial.print("[SHADOW] Reported state updated: ");
+//   Serial.println(buff);
+// }
+
+// void publishFeedback(String msg) {
+//   if (!awsConnected)
+//     return;
+//   client->publish(AWS_IOT_FEEDBACK_TOPIC, msg.c_str());
+//   Serial.println("[FEEDBACK] " + msg);
+// }
+
+// void controlMainPumpSafe(bool on) {
+//   Serial.println("\n[SAFETY] Pausing AWS connection...");
+
+//   if (client && client->connected()) {
+//     client->disconnect();
+//     awsConnected = false;
+//   }
+//   delay(300);
+
+//   if (WiFi.status() != WL_CONNECTED) {
+//     Serial.println("[SAFETY] WiFi lost. Reconnecting...");
+//     WiFi.mode(WIFI_STA);
+//     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//     unsigned long start = millis();
+//     while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+//       Serial.print(".");
+//       delay(300);
+//     }
+//     if (WiFi.status() != WL_CONNECTED) {
+//       Serial.println("[ERROR] No WiFi - aborting Tapo command.");
+//       connectAWS();
+//       return;
+//     }
+//   }
+
+//   if (!tapoInitialized) {
+//     Serial.println("Initializing Tapo device...");
+//     mainRASPump.begin(MAIN_RAS_PUMP, TAPO_EMAIL, TAPO_PASSWORD);
+//     tapoInitialized = true;
+//   }
+
+//   Serial.println("Using global TapoDevice...");
+//   if (on) {
+//     Serial.println("Turning on Main Pump");
+//     mainRASPump.on();
+//   } else {
+//     Serial.println("Turning off Main Pump");
+//     mainRASPump.off();
+//   }
+
+//   Serial.println("[SUCCESS] Command Sent.");
+//   delay(300);
+
+//   Serial.println("[SAFETY] Reconnecting to AWS...");
+//   connectAWS();
+
+//   reportShadowState(on);
+//   publishFeedback(on ? "Hardware: Main Pump ON" : "Hardware: Main Pump OFF");
+// }
+
+// // Control Backwash (Active LOW)
+// void controlBackwash(bool on) {
+//   if (on) {
+//     if (!backwashState) {
+//       Serial.println("Turning ON Backwash (Pin 16 LOW)");
+//       digitalWrite(BACKWASH_SIGNAL_PIN, LOW);
+//       backwashState = true;
+//       publishFeedback("Hardware: Backwash Motor ON");
+//     }
+//   } else {
+//     if (backwashState) {
+//       Serial.println("Turning OFF Backwash (Pin 16 HIGH)");
+//       digitalWrite(BACKWASH_SIGNAL_PIN, HIGH);
+//       backwashState = false;
+//       publishFeedback("Hardware: Backwash Motor OFF");
+//     }
+//   }
+// }
+
+// void mqttCallback(char *topic, byte *payload, unsigned int length) {
+//   String message = "";
+//   for (unsigned int i = 0; i < length; i++)
+//     message += (char)payload[i];
+
+//   Serial.print("Received on [");
+//   Serial.print(topic);
+//   Serial.print("]: ");
+//   Serial.println(message);
+
+//   // 1. Direct Commands
+//   if (message == "Turn on Backwash") {
+//     controlBackwash(true);
+//     backwashStopTime = 0;
+//   } else if (message == "Turn off Backwash" || message == "Turn off Motor") {
+//     controlBackwash(false);
+//     backwashStopTime = 0;
+//   } else if (message == "Start Motor 15min") {
+//     controlBackwash(true);
+//     backwashStopTime = millis() + (15 * 60 * 1000);
+//     Serial.println("Timer set for 15 minutes.");
+//     publishFeedback("Hardware: Timer set for 15 mins");
+//   } else if (message == "Start Motor 20min") {
+//     controlBackwash(true);
+//     backwashStopTime = millis() + (20 * 60 * 1000);
+//     Serial.println("Timer set for 20 minutes.");
+//     publishFeedback("Hardware: Timer set for 20 mins");
+//   } else if (message == "Turn on Main Pump") {
+//     triggerPumpOn = true;
+//   } else if (message == "Turn off Main Pump") {
+//     triggerPumpOff = true;
+//   }
+
+//   // 2. SHADOW DELTA HANDLER
+//   if (String(topic).endsWith("/delta")) {
+//     Serial.println("[SHADOW] Delta received! Syncing state...");
+//     StaticJsonDocument<512> doc;
+//     deserializeJson(doc, payload);
+//     const char *desiredPump = doc["state"]["pump"];
+
+//     if (desiredPump != nullptr) {
+//       if (strcmp(desiredPump, "ON") == 0)
+//         triggerPumpOn = true;
+//       else if (strcmp(desiredPump, "OFF") == 0)
+//         triggerPumpOff = true;
+//     }
+//   }
+// }
+
+// void connectAWS() {
+//   Serial.print("Connecting to AWS...");
+
+//   if (WiFi.status() != WL_CONNECTED) {
+//     WiFi.mode(WIFI_STA);
+//     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//     unsigned long start = millis();
+//     while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+//       Serial.print(".");
+//       delay(400);
+//     }
+//     Serial.println();
+//     if (WiFi.status() != WL_CONNECTED) {
+//       Serial.println("WiFi Failed!");
+//       awsConnected = false;
+//       return;
+//     } else {
+//       Serial.println("WiFi OK!");
+//     }
+//   }
+
+//   net->setCACert(AWS_CERT_CA);
+//   net->setCertificate(AWS_CERT_CRT);
+//   net->setPrivateKey(AWS_CERT_PRIVATE);
+
+//   const char *alpnProtocols[] = {"x-amzn-mqtt-ca", NULL};
+//   net->setAlpnProtocols(alpnProtocols);
+
+//   client->setServer(AWS_IOT_ENDPOINT, 443);
+//   client->setCallback(mqttCallback);
+
+//   if (client->connect(THINGNAME)) {
+//     awsConnected = true;
+//     Serial.println("Connected!");
+//     client->subscribe(SHADOW_DELTA_TOPIC);
+//     client->subscribe("har-test/ctrl");
+//   } else {
+//     Serial.print("Failed to connect MQTT, rc=");
+//     Serial.println(client->state());
+//     awsConnected = false;
+//   }
+// }
+
+// // --- SIMULATION SETTINGS ---
+// #define SIMULATION_MODE true // Set to true to simulate sensor values
+// unsigned long simTimer = 0;
+// bool simSkimmerState = true; // Start with 1 (High/Normal)
+
+// void publishSensorValues() {
+//   if (!awsConnected)
+//     return;
+//   StaticJsonDocument<200> doc;
+
+//   int skimmer;
+//   int drumfilter;
+
+//   if (SIMULATION_MODE) {
+//     // Toggle every 60 seconds
+//     if (millis() - simTimer > 60000) {
+//       simSkimmerState = !simSkimmerState;
+//       simTimer = millis();
+//       Serial.print("[SIMULATION] Toggling Skimmer to: ");
+//       Serial.println(simSkimmerState ? "1 (Normal)"
+//                                      : "0 (Low - Trigger Backwash)");
+//     }
+//     skimmer = simSkimmerState ? 1 : 0;
+//     drumfilter = 1; // Assume drum filter is fine
+//   } else {
+//     // REAL SENSOR READING
+//     skimmer = digitalRead(SKIMMER_LEVEL_PIN);
+//     drumfilter = digitalRead(DRUMFILTER_PIN);
+//   }
+
+//   doc["skimmer"] = skimmer;
+//   doc["drumfilter"] = drumfilter;
+//   doc["counter"] = counter;
+
+//   char buff[256];
+//   serializeJson(doc, buff);
+//   client->publish(AWS_IOT_PUBLISH_TOPIC, buff);
+// }
+
+// void loop() {
+//   if (client && awsConnected) {
+//     client->loop();
+//   }
+
+//   // Handle Triggers
+//   if (triggerPumpOn) {
+//     controlMainPumpSafe(true);
+//     triggerPumpOn = false;
+//   }
+//   if (triggerPumpOff) {
+//     controlMainPumpSafe(false);
+//     triggerPumpOff = false;
+//   }
+
+//   // Handle Timer
+//   if (backwashState && backwashStopTime > 0) {
+//     if (millis() > backwashStopTime) {
+//       Serial.println("Timer Expired. Turning OFF Backwash.");
+//       controlBackwash(false);
+//       backwashStopTime = 0;
+//     }
+//   }
+
+//   if ((!awsConnected || (client && !client->connected())) &&
+//       WiFi.status() == WL_CONNECTED) {
+//     connectAWS();
+//   }
+
+//   Serial.print("Counter: ");
+//   Serial.println(counter++);
+//   publishSensorValues();
+//   delay(1000);
+// }
+// #endif
