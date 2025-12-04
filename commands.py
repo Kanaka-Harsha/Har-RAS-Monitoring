@@ -195,10 +195,10 @@
 # """
 
 """
-AWS IoT Central Controller
+AWS IoT Central Controller (TEST MODE) - FIXED JSON FORMAT
 - Listens to 'har-test/command' for manual user inputs.
-- Listens to 'sensor/waterlevel' for automation (Backwash).
-- Sends all commands to 'har-test/ctrl'.
+- Listens to 'har-test/sensor' for SIMULATED sensor data.
+- Sends all commands to 'har-test/ctrl' AS PROPER JSON.
 - Publishes status/feedback to 'har-test/feedback'.
 """
 
@@ -214,12 +214,11 @@ AWS_IOT_ENDPOINT = "a2x983sew4xtsh-ats.iot.ap-northeast-1.amazonaws.com"
 
 # Topics
 MANUAL_TOPIC = "har-test/command" 
-SENSOR_TOPIC = "har-test/sensor"
+SENSOR_TOPIC = "har-test/sensor" 
 CONTROL_TOPIC = "har-test/ctrl"
 FEEDBACK_TOPIC = "har-test/feedback"
 
 # Certificate Paths
-# Ensure these match the location on your Pi
 CERT_FILE = "Test_Certificates/Har-Device.pem.crt"
 PRIVATE_KEY_FILE = "Test_Certificates/Har-Private.pem.key"
 CA_FILE = "Test_Certificates/Har-RootCA1.pem"
@@ -260,10 +259,19 @@ def on_connect(client, userdata, flags, rc):
         print(f"  Subscribing to: {MANUAL_TOPIC}")
         print(f"  Subscribing to: {SENSOR_TOPIC}")
         client.subscribe([(MANUAL_TOPIC, 1), (SENSOR_TOPIC, 1)])
-        log_and_feedback(client, "System Online: Central Controller Connected.")
+        log_and_feedback(client, f"System Online: Connected. Listening to {SENSOR_TOPIC}")
     else:
         print(f"✗ Connection failed (code: {rc})")
         os._exit(1)
+
+def send_control_command(client, command_text):
+    """Helper to send JSON formatted commands to ESP32"""
+    # 🔧 FIX: Wrap the command in a JSON object
+    payload_dict = {"command": command_text}
+    json_payload = json.dumps(payload_dict)
+    
+    client.publish(CONTROL_TOPIC, json_payload, qos=1)
+    log_and_feedback(client, f"Sent Signal to ESP32: {json_payload}")
 
 def handle_manual_command(client, payload):
     print(f"\n[MANUAL CMD] Payload: {payload}")
@@ -288,8 +296,7 @@ def handle_manual_command(client, payload):
         return
 
     if command_to_send:
-        client.publish(CONTROL_TOPIC, command_to_send, qos=1)
-        log_and_feedback(client, f"Sent Signal to ESP32: {command_to_send}")
+        send_control_command(client, command_to_send)
 
 def handle_sensor_data(client, payload):
     try:
@@ -303,27 +310,27 @@ def handle_sensor_data(client, payload):
         if skimmer == 0:
             # Condition: Skimmer is 0 (Low)
             if not state.backwash_active:
-                # Turn ON if not already on
                 log_and_feedback(client, "Auto-Trigger: Skimmer LOW (0). Turning ON Backwash.")
-                client.publish(CONTROL_TOPIC, "Turn on Backwash", qos=1)
-                log_and_feedback(client, "Sent Signal to ESP32: Turn on Backwash")
+                
+                # 🔧 FIX: Use helper to send JSON
+                send_control_command(client, "Turn on Backwash")
                 
                 state.backwash_active = True
                 state.backwash_start_time = datetime.now()
             else:
-                # Already ON, check timeout (20 mins)
                 elapsed = (datetime.now() - state.backwash_start_time).total_seconds()
                 if elapsed > (20 * 60):
                     log_and_feedback(client, "🚨 Safety Timeout (20m). Forcing Backwash OFF.")
-                    client.publish(CONTROL_TOPIC, "Turn off Backwash", qos=1)
-                    log_and_feedback(client, "Sent Signal to ESP32: Turn off Backwash")
+                    send_control_command(client, "Turn off Backwash")
                     pass 
         else:
             # Condition: Skimmer is NOT 0 (e.g. 1)
             if state.backwash_active:
                 log_and_feedback(client, "Auto-Trigger: Skimmer Recovered (1). Turning OFF Backwash.")
-                client.publish(CONTROL_TOPIC, "Turn off Backwash", qos=1)
-                log_and_feedback(client, "Sent Signal to ESP32: Turn off Backwash")
+                
+                # 🔧 FIX: Use helper to send JSON
+                send_control_command(client, "Turn off Backwash")
+                
                 state.backwash_active = False
                 state.backwash_start_time = None
 
