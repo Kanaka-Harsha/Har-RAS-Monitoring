@@ -17,6 +17,19 @@ CERT_FILE = "Test_Certificates/Har-Device.pem.crt"
 PRIVATE_KEY_FILE = "Test_Certificates/Har-Private.pem.key"
 CA_FILE = "Test_Certificates/Har-RootCA1.pem"
 
+# Load Environment Variables (for RTSP URL)
+def load_env():
+    env_file = "credentials.env"
+    if os.path.exists(env_file):
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    os.environ[key.strip()] = value.strip()
+
+load_env()
+
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"✓ Connected to AWS IoT!")
@@ -48,8 +61,16 @@ def on_message(client, userdata, message):
             # Run capture.py
             # We use subprocess to run it as a separate process
             try:
+                cmd = ["python", "capture.py", "--duration", str(duration)]
+                
+                # Check for RTSP URL
+                rtsp_url = os.environ.get("RTSP_URL")
+                if rtsp_url:
+                    print(f"Using RTSP URL: {rtsp_url}")
+                    cmd.extend(["--rtsp", rtsp_url])
+                
                 result = subprocess.run(
-                    ["python", "capture.py", "--duration", str(duration)], 
+                    cmd, 
                     capture_output=True, 
                     text=True,
                     check=True
